@@ -18,6 +18,10 @@ except ImportError:
 # =============================
 # MODEL CONFIGURATION
 # =============================
+# Groq retires models regularly. Check console.groq.com/docs/deprecations
+# if you ever see a "model not found" error.
+
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 
 PROVIDERS = {
     "ollama": {
@@ -31,16 +35,14 @@ PROVIDERS = {
     "groq": {
         "label": "Groq (Cloud)",
         "models": {
-            "Llama 3.3 70B": "llama-3.3-70b-versatile",
-            "Llama 3.1 8B": "llama-3.1-8b-instant",
-            "Mixtral 8x7B": "mixtral-8x7b-32768",
-            "Gemma 2 9B": "gemma2-9b-it",
+            "GPT-OSS 120B": "openai/gpt-oss-120b",
+            "GPT-OSS 20B": "openai/gpt-oss-20b",
         }
     }
 }
 
 CURRENT_PROVIDER = "groq"
-CURRENT_MODEL = "llama-3.3-70b-versatile"
+CURRENT_MODEL = DEFAULT_GROQ_MODEL
 
 
 # =============================
@@ -141,13 +143,22 @@ def load_saved_provider_and_model():
 
     from db import load_setting
     saved_provider = load_setting("current_provider", "groq")
-    saved_model = load_setting("current_model", "llama-3.3-70b-versatile")
+    saved_model = load_setting("current_model", DEFAULT_GROQ_MODEL)
 
     if saved_provider in PROVIDERS:
         CURRENT_PROVIDER = saved_provider
 
     if saved_provider == "groq":
-        CURRENT_MODEL = saved_model
+        # An old database may still remember a model Groq has retired.
+        # Only trust the saved model if it is in our current list.
+        valid = PROVIDERS["groq"]["models"].values()
+        if saved_model in valid:
+            CURRENT_MODEL = saved_model
+        else:
+            print(f"Saved model {saved_model} is not in the current Groq list. "
+                  f"Using {DEFAULT_GROQ_MODEL}.")
+            CURRENT_MODEL = DEFAULT_GROQ_MODEL
+
     elif saved_provider == "ollama":
         available = get_available_local_models()
         model_base = saved_model.split(":")[0]
