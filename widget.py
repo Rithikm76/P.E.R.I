@@ -5,11 +5,16 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QFrame,
     QVBoxLayout, QHBoxLayout
 )
-from PyQt5.QtCore import Qt, QPoint, QTimer
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5.QtGui import QPainter, QRadialGradient, QColor, QBrush
 
 
 class PeriWidget(QWidget):
+
+    # The brain works in a background thread. Qt widgets may only be touched
+    # from the main thread. Signals carry the reply safely across.
+    reply_ready = pyqtSignal(str)
+    error_ready = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -48,6 +53,9 @@ class PeriWidget(QWidget):
         self._press_pos      = QPoint()
         self._press_on_orb   = False
         self._brain          = None
+
+        self.reply_ready.connect(self._on_reply)
+        self.error_ready.connect(self._on_error)
 
         # ── Default position: top right ───────────────
         screen = QApplication.primaryScreen().geometry()
@@ -205,7 +213,11 @@ class PeriWidget(QWidget):
             from brain import Brain
             self._brain = Brain()
 
-        self._brain.respond(text, on_reply=self._on_reply, on_error=self._on_error)
+        self._brain.respond(
+            text,
+            on_reply=self.reply_ready.emit,
+            on_error=self.error_ready.emit
+        )
 
     def _on_reply(self, reply):
         self._is_thinking = False
