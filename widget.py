@@ -9,15 +9,6 @@ from PyQt5.QtCore import Qt, QPoint, QTimer
 from PyQt5.QtGui import QPainter, QRadialGradient, QColor, QBrush
 
 
-# ── Dimensions ────────────────────────────────────────
-ORB_AREA    = 100   # the square that holds the orb
-BUBBLE_W    = 280
-BUBBLE_H    = 320
-TOTAL_W     = BUBBLE_W + ORB_AREA   # 380 — orb right of bubble... wait
-# Actually: bubble left, orb bottom-right
-# Total widget when open: width=BUBBLE_W+padding, height=BUBBLE_H+ORB_AREA
-
-
 class PeriWidget(QWidget):
 
     def __init__(self):
@@ -37,10 +28,8 @@ class PeriWidget(QWidget):
         self.orb_area    = self.orb_size + self.orb_padding * 2  # 100
         self.bubble_w    = 280
         self.bubble_h    = 320
-
-        # Expanded widget dimensions
-        self.exp_w = self.bubble_w + 20        # 300 — 20px right margin for orb
-        self.exp_h = self.bubble_h + self.orb_area  # 420
+        self.exp_w       = self.bubble_w + 20
+        self.exp_h       = self.bubble_h + self.orb_area
 
         # ── Colors ────────────────────────────────────
         self.color_core      = QColor("#4FC3F7")
@@ -55,14 +44,15 @@ class PeriWidget(QWidget):
         self._glow_intensity = 0.0
         self._dragging       = False
         self._drag_offset    = QPoint()
+        self._closed_pos     = QPoint()
+        self._press_pos      = QPoint()
+        self._press_on_orb   = False
         self._brain          = None
 
-        # ── Default position: right side, 1/3 from top ─
+        # ── Default position: top right ───────────────
         screen = QApplication.primaryScreen().geometry()
-        self._closed_x = screen.width() - self.orb_area - 40
-        self._closed_y = int(screen.height() * 0.3)
         self.setFixedSize(self.orb_area, self.orb_area)
-        self.move(self._closed_x, self._closed_y)
+        self.move(screen.width() - self.orb_area - 40, 120)
 
         # ── Build bubble UI ───────────────────────────
         self._build_bubble()
@@ -90,7 +80,6 @@ class PeriWidget(QWidget):
         layout.setContentsMargins(12, 12, 12, 10)
         layout.setSpacing(8)
 
-        # Chat display
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
         self.chat_display.setStyleSheet("""
@@ -113,7 +102,6 @@ class PeriWidget(QWidget):
         """)
         layout.addWidget(self.chat_display)
 
-        # Input row
         input_frame = QFrame()
         input_frame.setStyleSheet("""
             QFrame {
@@ -149,12 +137,8 @@ class PeriWidget(QWidget):
                 font-size: 15px;
                 border: none;
             }
-            QPushButton:hover {
-                background-color: #4FC3F7;
-            }
-            QPushButton:pressed {
-                background-color: #01579B;
-            }
+            QPushButton:hover { background-color: #4FC3F7; }
+            QPushButton:pressed { background-color: #01579B; }
         """)
         send_btn.clicked.connect(self._send_message)
 
@@ -166,15 +150,20 @@ class PeriWidget(QWidget):
 
     def _tick(self):
         speed = 0.05 if self._is_thinking else 0.025
-        self._pulse_time     += speed
-        self._glow_intensity  = (math.sin(self._pulse_time) + 1) / 2
-
-        if self._is_thinking:
-            self.color_core = self.color_accent
-        else:
-            self.color_core = QColor("#4FC3F7")
-
+        self._pulse_time    += speed
+        self._glow_intensity = (math.sin(self._pulse_time) + 1) / 2
+        self.color_core      = self.color_accent if self._is_thinking else QColor("#4FC3F7")
         self.update()
+
+    # ── Orb center ────────────────────────────────────
+
+    def _orb_center(self):
+        if self._bubble_open:
+            return (
+                self.exp_w - self.orb_area // 2,
+                self.exp_h - self.orb_area // 2
+            )
+        return self.orb_area // 2, self.orb_area // 2
 
     # ── Bubble toggle ─────────────────────────────────
 
@@ -182,35 +171,24 @@ class PeriWidget(QWidget):
         self._bubble_open = not self._bubble_open
 
         if self._bubble_open:
-            # Save current orb screen position (top-left of orb area)
-            orb_screen = self.mapToGlobal(QPoint(0, 0))
+            self._closed_pos = self.pos()
 
-            # Expand widget: bubble above-left, orb bottom-right
-            # New widget top-left: move left by bubble_w, move up by bubble_h
-            new_x = orb_screen.x() - self.bubble_w + 20
-            new_y = orb_screen.y() - self.bubble_h
-
-            # Clamp to screen bounds
             screen = QApplication.primaryScreen().geometry()
+            new_x = self.x() - (self.exp_w - self.orb_area)
+            new_y = self.y() - self.bubble_h
             new_x = max(0, min(new_x, screen.width()  - self.exp_w))
             new_y = max(0, min(new_y, screen.height() - self.exp_h))
 
             self.setFixedSize(self.exp_w, self.exp_h)
             self.move(new_x, new_y)
-
-            # Position bubble at top-left of expanded widget
             self.bubble.move(0, 0)
             self.bubble.show()
             self.input_field.setFocus()
 
         else:
-            # Collapse: find where orb is now (bottom-right of expanded widget)
-            orb_screen_x = self.x() + self.exp_w - self.orb_area + 20
-            orb_screen_y = self.y() + self.exp_h - self.orb_area
-
             self.bubble.hide()
             self.setFixedSize(self.orb_area, self.orb_area)
-            self.move(orb_screen_x, orb_screen_y)
+            self.move(self._closed_pos)
 
     # ── Messaging ─────────────────────────────────────
 
@@ -218,30 +196,25 @@ class PeriWidget(QWidget):
         text = self.input_field.text().strip()
         if not text:
             return
-
         self.input_field.clear()
         self.input_field.setEnabled(False)
         self._append_message("You", text, "#E3F2FD")
-        self._set_thinking(True)
+        self._is_thinking = True
 
         if self._brain is None:
             from brain import Brain
             self._brain = Brain()
 
-        self._brain.respond(
-            text,
-            on_reply=self._on_reply,
-            on_error=self._on_error
-        )
+        self._brain.respond(text, on_reply=self._on_reply, on_error=self._on_error)
 
     def _on_reply(self, reply):
-        self._set_thinking(False)
+        self._is_thinking = False
         self._append_message("PERI", reply, "#4FC3F7")
         self.input_field.setEnabled(True)
         self.input_field.setFocus()
 
     def _on_error(self, error):
-        self._set_thinking(False)
+        self._is_thinking = False
         self._append_message("PERI", f"Something went wrong: {error}", "#EF9A9A")
         self.input_field.setEnabled(True)
 
@@ -254,32 +227,22 @@ class PeriWidget(QWidget):
         )
         self.chat_display.append(html)
 
-    def _set_thinking(self, thinking):
-        self._is_thinking = thinking
-
     # ── Painting ──────────────────────────────────────
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Orb center: bottom-right of widget
-        if self._bubble_open:
-            cx = self.exp_w - self.orb_area // 2 + 20
-            cy = self.exp_h - self.orb_area // 2
-        else:
-            cx = self.orb_area // 2
-            cy = self.orb_area // 2
-
+        cx, cy     = self._orb_center()
         orb_radius = self.orb_size // 2
 
         # Outer glow
-        glow_r = orb_radius + 8 + (self._glow_intensity * 6)
+        glow_r       = orb_radius + 8 + (self._glow_intensity * 6)
         glow_opacity = 0.2 + (self._glow_intensity * 0.25)
 
         glow = QRadialGradient(cx, cy, glow_r)
-        c1 = QColor(self.color_ring); c1.setAlphaF(glow_opacity)
-        c2 = QColor(self.color_ring); c2.setAlphaF(0.0)
+        c1   = QColor(self.color_ring); c1.setAlphaF(glow_opacity)
+        c2   = QColor(self.color_ring); c2.setAlphaF(0.0)
         glow.setColorAt(0.5, c1)
         glow.setColorAt(1.0, c2)
 
@@ -303,7 +266,7 @@ class PeriWidget(QWidget):
         painter.setBrush(QBrush(core))
         painter.drawEllipse(
             cx - orb_radius, cy - orb_radius,
-            self.orb_size, self.orb_size
+            self.orb_size,   self.orb_size
         )
 
     # ── Mouse events ──────────────────────────────────
@@ -311,32 +274,29 @@ class PeriWidget(QWidget):
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
-
-        # Detect if click landed on the orb
-        if self._bubble_open:
-            cx = self.exp_w - self.orb_area // 2 + 20
-            cy = self.exp_h - self.orb_area // 2
-        else:
-            cx = self.orb_area // 2
-            cy = self.orb_area // 2
-
+        self._press_pos   = event.globalPos()
+        self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+        cx, cy            = self._orb_center()
         dx = event.x() - cx
         dy = event.y() - cy
-        on_orb = (dx * dx + dy * dy) <= (self.orb_size // 2) ** 2
-
-        if on_orb:
-            self._toggle_bubble()
-        else:
-            self._dragging = True
-            self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+        self._press_on_orb = (dx * dx + dy * dy) <= (self.orb_size // 2) ** 2
 
     def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        delta = event.globalPos() - self._press_pos
+        if delta.manhattanLength() > 6:
+            self._dragging = True
         if self._dragging:
             self.move(event.globalPos() - self._drag_offset)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._dragging = False
+        if event.button() != Qt.LeftButton:
+            return
+        if not self._dragging and self._press_on_orb:
+            self._toggle_bubble()
+        self._dragging     = False
+        self._press_on_orb = False
 
 
 # ── Entry point ───────────────────────────────────────
